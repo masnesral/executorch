@@ -7,7 +7,7 @@
 
 set -euxo pipefail
 
-MODES=("Release" "Debug")
+MODES=()
 PRESETS=("ios" "ios-simulator" "macos")
 # To support backwards compatibility, we want to retain the same output directory.
 PRESETS_RELATIVE_OUT_DIR=("ios" "simulator" "macos")
@@ -137,6 +137,11 @@ for arg in "$@"; do
   esac
 done
 
+# If no modes are specified, default to both Release and Debug
+if [[ ${#MODES[@]} -eq 0 ]]; then
+  MODES=("Release" "Debug")
+fi
+
 echo "Building libraries"
 
 rm -rf "${OUTPUT_DIR}"
@@ -148,112 +153,110 @@ for preset_index in "${!PRESETS[@]}"; do
     echo "Building preset ${preset} (${mode}) in ${preset_output_dir}..."
 
     # Do NOT add options here. Update the respective presets instead.
-    # Xcode multi-config presets leave CMAKE_BUILD_TYPE empty, so force EXECUTORCH_ENABLE_LOGGING per-mode.
     cmake -S "${SOURCE_ROOT_DIR}" \
           -B "${preset_output_dir}" \
+          --fresh \
           -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="${preset_output_dir}" \
           -DCMAKE_BUILD_TYPE="${mode}" \
-          -UEXECUTORCH_ENABLE_LOGGING \
-          -DEXECUTORCH_ENABLE_LOGGING=$([ "${mode}" = "Debug" ] && echo ON || echo OFF) \
           ${CMAKE_OPTIONS_OVERRIDE[@]:-} \
           --preset "${preset}"
 
-    cmake --build "${preset_output_dir}" \
-          --config "${mode}" \
-          -j$(sysctl -n hw.ncpu)
+    # cmake --build "${preset_output_dir}" \
+    #       --config "${mode}" \
+    #       -j$(sysctl -n hw.ncpu)
   done
 done
 
-echo "Exporting headers"
+# echo "Exporting headers"
 
-mkdir -p "$HEADERS_ABSOLUTE_PATH"
+# mkdir -p "$HEADERS_ABSOLUTE_PATH"
 
-"$SOURCE_ROOT_DIR"/scripts/print_exported_headers.py --buck2=$(realpath "$BUCK2") --targets \
-  //extension/module: \
-  //extension/tensor: \
-| rsync -av --files-from=- "$SOURCE_ROOT_DIR" "$HEADERS_ABSOLUTE_PATH/executorch"
+# "$SOURCE_ROOT_DIR"/scripts/print_exported_headers.py --buck2=$(realpath "$BUCK2") --targets \
+#   //extension/module: \
+#   //extension/tensor: \
+# | rsync -av --files-from=- "$SOURCE_ROOT_DIR" "$HEADERS_ABSOLUTE_PATH/executorch"
 
-# HACK: XCFrameworks don't appear to support exporting any build
-# options, but we need the following:
-# - runtime/core/portable/type/c10 reachable with `#include <c10/...>`
-# - exported -DC10_USING_CUSTOM_GENERATED_MACROS compiler flag
-# So, just patch our generated framework to do that.
-sed -i '' '1i\
-#define C10_USING_CUSTOM_GENERATED_MACROS
-' \
-"$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10/macros/Macros.h" \
-"$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10/macros/Export.h" \
-"$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/torch/headeronly/macros/Export.h"
+# # HACK: XCFrameworks don't appear to support exporting any build
+# # options, but we need the following:
+# # - runtime/core/portable/type/c10 reachable with `#include <c10/...>`
+# # - exported -DC10_USING_CUSTOM_GENERATED_MACROS compiler flag
+# # So, just patch our generated framework to do that.
+# sed -i '' '1i\
+# #define C10_USING_CUSTOM_GENERATED_MACROS
+# ' \
+# "$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10/macros/Macros.h" \
+# "$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10/macros/Export.h" \
+# "$HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/torch/headeronly/macros/Export.h"
 
-cp -r $HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10 "$HEADERS_ABSOLUTE_PATH/"
-cp -r $HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/torch "$HEADERS_ABSOLUTE_PATH/"
+# cp -r $HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/c10 "$HEADERS_ABSOLUTE_PATH/"
+# cp -r $HEADERS_ABSOLUTE_PATH/executorch/runtime/core/portable_type/c10/torch "$HEADERS_ABSOLUTE_PATH/"
 
-cp "$SOURCE_ROOT_DIR/extension/apple/ExecuTorch/Exported/"*.h "$HEADERS_ABSOLUTE_PATH/executorch"
+# cp "$SOURCE_ROOT_DIR/extension/apple/ExecuTorch/Exported/"*.h "$HEADERS_ABSOLUTE_PATH/executorch"
 
-cat > "$HEADERS_ABSOLUTE_PATH/module.modulemap" << 'EOF'
-module ExecuTorch {
-  umbrella header "ExecuTorch/ExecuTorch.h"
-  export *
-}
-EOF
+# cat > "$HEADERS_ABSOLUTE_PATH/module.modulemap" << 'EOF'
+# module ExecuTorch {
+#   umbrella header "ExecuTorch/ExecuTorch.h"
+#   export *
+# }
+# EOF
 
-echo "Creating frameworks"
+# echo "Creating frameworks"
 
-append_framework_flag() {
-  local option_name="$1"
-  local framework="$2"
-  local mode="$3"
+# append_framework_flag() {
+#   local option_name="$1"
+#   local framework="$2"
+#   local mode="$3"
 
-  if [[ ${#CMAKE_OPTIONS_OVERRIDE[@]} -gt 0 && -n "$option_name" ]]; then
-    for cmake_option in "${CMAKE_OPTIONS_OVERRIDE[@]}"; do
-      if [[ "$cmake_option" =~ "-D${option_name}=OFF" ]]; then
-        echo "Skipping framework: ${framework}"
-        return
-      fi
-    done
-  fi
+#   if [[ ${#CMAKE_OPTIONS_OVERRIDE[@]} -gt 0 && -n "$option_name" ]]; then
+#     for cmake_option in "${CMAKE_OPTIONS_OVERRIDE[@]}"; do
+#       if [[ "$cmake_option" =~ "-D${option_name}=OFF" ]]; then
+#         echo "Skipping framework: ${framework}"
+#         return
+#       fi
+#     done
+#   fi
 
-  if [[ -n "$mode" && "$mode" != "Release" ]]; then
-      local name spec
-      name=$(echo "$framework" | cut -d: -f1)
-      spec=$(echo "$framework" | cut -d: -f2-)
-      framework="${name}_$(echo "$mode" | tr '[:upper:]' '[:lower:]'):${spec}"
-  fi
-  echo "Adding framework: ${framework}"
-  FRAMEWORK_FLAGS+=("--framework=$framework")
-}
+#   if [[ -n "$mode" && "$mode" != "Release" ]]; then
+#       local name spec
+#       name=$(echo "$framework" | cut -d: -f1)
+#       spec=$(echo "$framework" | cut -d: -f2-)
+#       framework="${name}_$(echo "$mode" | tr '[:upper:]' '[:lower:]'):${spec}"
+#   fi
+#   echo "Adding framework: ${framework}"
+#   FRAMEWORK_FLAGS+=("--framework=$framework")
+# }
 
-for mode in "${MODES[@]}"; do
-  FRAMEWORK_FLAGS=()
-  for preset_out_dir in "${PRESETS_RELATIVE_OUT_DIR[@]}"; do
-    echo "Framework directory: ${preset_out_dir}/${mode}"
-    FRAMEWORK_FLAGS+=("--directory=${preset_out_dir}/${mode}")
-  done
+# for mode in "${MODES[@]}"; do
+#   FRAMEWORK_FLAGS=()
+#   for preset_out_dir in "${PRESETS_RELATIVE_OUT_DIR[@]}"; do
+#     echo "Framework directory: ${preset_out_dir}/${mode}"
+#     FRAMEWORK_FLAGS+=("--directory=${preset_out_dir}/${mode}")
+#   done
 
-  append_framework_flag "" "$FRAMEWORK_EXECUTORCH" "$mode"
-  append_framework_flag "" "$FRAMEWORK_THREADPOOL" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_COREML" "$FRAMEWORK_BACKEND_COREML" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_MPS" "$FRAMEWORK_BACKEND_MPS" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_XNNPACK" "$FRAMEWORK_BACKEND_XNNPACK" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_KERNELS_LLM" "$FRAMEWORK_KERNELS_LLM" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_KERNELS_OPTIMIZED" "$FRAMEWORK_KERNELS_OPTIMIZED" "$mode"
-  append_framework_flag "EXECUTORCH_BUILD_KERNELS_QUANTIZED" "$FRAMEWORK_KERNELS_QUANTIZED" "$mode"
+#   append_framework_flag "" "$FRAMEWORK_EXECUTORCH" "$mode"
+#   append_framework_flag "" "$FRAMEWORK_THREADPOOL" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_COREML" "$FRAMEWORK_BACKEND_COREML" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_MPS" "$FRAMEWORK_BACKEND_MPS" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_XNNPACK" "$FRAMEWORK_BACKEND_XNNPACK" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_KERNELS_LLM" "$FRAMEWORK_KERNELS_LLM" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_KERNELS_OPTIMIZED" "$FRAMEWORK_KERNELS_OPTIMIZED" "$mode"
+#   append_framework_flag "EXECUTORCH_BUILD_KERNELS_QUANTIZED" "$FRAMEWORK_KERNELS_QUANTIZED" "$mode"
 
-  cd "${OUTPUT_DIR}"
-  "$SOURCE_ROOT_DIR"/scripts/create_frameworks.sh "${FRAMEWORK_FLAGS[@]}"
-done
+#   cd "${OUTPUT_DIR}"
+#   "$SOURCE_ROOT_DIR"/scripts/create_frameworks.sh "${FRAMEWORK_FLAGS[@]}"
+# done
 
-echo "Cleaning up"
+# echo "Cleaning up"
 
-for preset_out_dir in "${PRESETS_RELATIVE_OUT_DIR[@]}"; do
-  rm -rf "${OUTPUT_DIR}/${preset_out_dir}"
-done
+# for preset_out_dir in "${PRESETS_RELATIVE_OUT_DIR[@]}"; do
+#   rm -rf "${OUTPUT_DIR}/${preset_out_dir}"
+# done
 
-rm -rf "$HEADERS_ABSOLUTE_PATH"
+# rm -rf "$HEADERS_ABSOLUTE_PATH"
 
-echo "Running tests"
+# echo "Running tests"
 
-cd "$SOURCE_ROOT_DIR"
-swift test
+# cd "$SOURCE_ROOT_DIR"
+# swift test
 
-echo "Build succeeded!"
+# echo "Build succeeded!"

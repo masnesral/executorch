@@ -100,6 +100,24 @@ announce_configured_options(CCACHE_PROGRAM)
 # Print all the configs that were called with announce_configured_options.
 print_configured_options()
 
+
+message(WARNING "jathu-log PLATFORM: ${PLATFORM}")
+message(WARNING "jathu-log CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  if(EXECUTORCH_ENABLE_LOGGING)
+    message(WARNING "jathu-log EXECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING}")
+  else()
+    message(WARNING "jathu-log EXECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING} ❌")
+  endif()
+else()
+  if(EXECUTORCH_ENABLE_LOGGING)
+    message(WARNING "jathu-log EXECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING} ❌")
+  else()
+    message(WARNING "jathu-log EXECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING}")
+  endif()
+endif()
+message(WARNING "jathu-log -----------------------------------------------------")
+
 # MARK: - End EXECUTORCH_H12025_BUILD_MIGRATION
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

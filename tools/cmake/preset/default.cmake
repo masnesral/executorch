@@ -14,11 +14,15 @@ endif()
 
 # MARK: - Overridable Options
 
+message(WARNING "jathu-log computing -> [before] EXECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING}")
 define_overridable_option(
   EXECUTORCH_ENABLE_LOGGING
   "Build with ET_LOG_ENABLED"
   BOOL ${_is_build_type_debug}
 )
+message(WARNING "jathu-log computing -> _is_build_type_debug: ${_is_build_type_debug}")
+message(WARNING "jathu-log computing -> [after] XECUTORCH_ENABLE_LOGGING: ${EXECUTORCH_ENABLE_LOGGING}")
+
 define_overridable_option(
   EXECUTORCH_BUILD_COREML
   "Build the Core ML backend"
